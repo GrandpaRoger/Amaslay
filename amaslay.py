@@ -4,65 +4,49 @@ from urllib.parse import urljoin
 import socks
 import socket
 import requests
-import telnetlib
+from stem.control import Controller
 
 class SQLiTester:
     def __init__(self, base_url, proxy=None):
         self.base_url = base_url.rstrip('/')
+        self.proxy = proxy
         self.session = requests.Session()
-
-        # Configure SOCKS proxy if provided
+        
         if proxy:
             proxy_host, proxy_port = proxy.split(':')
-            socks.set_default_proxy(
-                socks.SOCKS5,
-                proxy_host,
-                int(proxy_port)
-            )
+            socks.set_default_proxy(socks.SOCKS5, proxy_host, int(proxy_port))
             socket.socket = socks.socksocket
             print(f"🔵 Using SOCKS proxy: {proxy}")
+            self._print_current_ip()
 
-    def _send_request(self, url, data=None, method='POST', allow_redirects=True):
+    def _print_current_ip(self):
+        try:
+            ip = self.session.get("http://httpbin.org/ip", timeout=10).json()["origin"]
+            print(f"🌐 Current IP: {ip}")
+        except Exception as e:
+            print(f"⚠️ Could not get IP: {e}")
+
+    def _request_new_tor_identity(self):
+        try:
+            with Controller.from_port(port=9051) as controller:
+                controller.authenticate()  # Use password='yourpassword' if set in torrc
+                controller.signal('NEWNYM')
+                print("🔁 New Tor identity requested.")
+            time.sleep(5)
+            self._print_current_ip()
+        except Exception as e:
+            print(f"⚠️ Failed to request new identity: {e}")
+
+    def _send_request(self, url, data=None, method='POST'):
         try:
             if method == 'POST':
-                r = self.session.post(url, data=data, timeout=10, allow_redirects=allow_redirects)
+                r = self.session.post(url, data=data, timeout=10)
             else:
-                r = self.session.get(url, timeout=10, allow_redirects=allow_redirects)
+                r = self.session.get(url, timeout=10)
             return r
         except Exception as e:
             print(f"⚠️ Request failed: {str(e)}")
             return None
-
-    def get_current_ip(self):
-        """Check current Tor exit IP address"""
-        try:
-            r = self.session.get("https://icanhazip.com", timeout=10)
-            if r.status_code == 200:
-                print(f"🌍 Current Tor IP: {r.text.strip()}")
-            else:
-                print("⚠️ Failed to get IP (bad status code)")
-        except Exception as e:
-            print(f"⚠️ Failed to get IP: {e}")
-
-    def request_new_tor_identity(self, control_port=9051):
-        """Send NEWNYM to Tor control port to rotate IP"""
-        try:
-            tn = telnetlib.Telnet('127.0.0.1', control_port)
-            tn.write(b'AUTHENTICATE\r\n')
-            tn.read_until(b'250 OK', timeout=3)
-            tn.write(b'SIGNAL NEWNYM\r\n')
-            response = tn.read_until(b'250 OK', timeout=3)
-            if b'250 OK' in response:
-                print("🔁 New Tor identity requested.")
-                time.sleep(5)
-                self.get_current_ip()
-                return True
-            else:
-                print("❌ Failed to request new identity.")
-                return False
-        except Exception as e:
-            print(f"⚠️ Error connecting to Tor control port: {e}")
-            return False
 
     def test_increase_count(self):
         print("\n🔴 [TEST] IncreaseCount() SQLi")
